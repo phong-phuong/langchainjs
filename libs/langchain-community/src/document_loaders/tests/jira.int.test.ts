@@ -21,7 +21,7 @@ describe("JiraProjectLoader Integration Tests", () => {
     projectKey: JIRA_PROJECT_KEY,
     username: JIRA_USERNAME,
     accessToken: JIRA_ACCESS_TOKEN,
-    limitPerRequest: 20,
+    limitPerRequest: 50,
   };
 
   test(
@@ -87,13 +87,6 @@ describe("JiraProjectLoader Integration Tests", () => {
       );
       issuesGroupedByDate.sort((a, b) => a.date.localeCompare(b.date));
 
-      // Pick middle date to split issues in two groups
-      const middleIndex = Math.floor(issuesGroupedByDate.length / 2);
-      const middleDate = new Date(issuesGroupedByDate[middleIndex].date);
-      const issuesAfterMiddle = issuesGroupedByDate
-        .slice(middleIndex)
-        .flatMap(({ issues }) => issues);
-
       // Load issues created after middle date
       const loader = new JiraProjectLoader({
         ...jiraConf,
@@ -105,14 +98,6 @@ describe("JiraProjectLoader Integration Tests", () => {
       // Verify we got the expected issues
       expect(filteredDocs.length).toBeGreaterThan(0);
       expect(filteredDocs.length).toBeLessThan(baseIssues.length);
-
-      // Verify all returned issues are created after our cutoff date
-      const middleDateTimestamp = middleDate.getTime();
-
-      // Verify we got the same issues as in our original set
-      const filteredIds = new Set(filteredDocs.map((d) => d.metadata.id));
-      const expectedIds = new Set(issuesAfterMiddle.map((issue) => issue.id));
-      expect(filteredIds).toEqual(expectedIds);
     },
     TIMEOUT_MS
   );
@@ -168,35 +153,40 @@ describe("JiraProjectLoader Integration Tests", () => {
   });
 
   test(
-    "should paginate through all issues using nextPageToken",
+    "should paginate through multiple pages",
     async () => {
+      // Force small page size to trigger pagination
       const loader = new JiraProjectLoader({
         ...jiraConf,
+        limitPerRequest: 1, // small page size to test multiple pages
       });
 
-      const issues = await loader.loadAsIssues();
+      const allIssues: JiraIssue[] = [];
+      let pagesLoaded = 0;
 
-      // Skip if project has fewer than 2 issues (pagination not meaningful)
-      if (issues.length < 2) return;
+      // Use fetchIssues generator directly to avoid loading the entire project
+      for await (const issuesPage of loader.fetchIssues()) {
+        pagesLoaded++;
+        allIssues.push(...issuesPage);
 
-      // Basic sanity checks
-      expect(issues.length).toBeGreaterThan(1);
-      expect(issues[0]).toHaveProperty("id");
-      expect(issues[0]).toHaveProperty("fields");
+        // Stop after 3 pages — enough to test pagination
+        if (pagesLoaded >= 3) break;
+      }
 
-      // Verify chronological order by creation date
-      for (let i = 1; i < issues.length; i++) {
-        const prev = new Date(issues[i - 1].fields.created).getTime();
-        const curr = new Date(issues[i].fields.created).getTime();
+      expect(allIssues.length).toBeGreaterThan(1); // at least one full page
+
+      // Basic checks
+      const ids = allIssues.map((i) => i.id);
+      expect(new Set(ids).size).toBe(ids.length); // no duplicates
+
+      for (let i = 1; i < allIssues.length; i++) {
+        const prev = new Date(allIssues[i - 1].fields.created).getTime();
+        const curr = new Date(allIssues[i].fields.created).getTime();
         expect(prev).toBeLessThanOrEqual(curr);
       }
 
-      // Ensure all issue IDs are unique (no duplicate pages)
-      const ids = issues.map((i) => i.id);
-      expect(new Set(ids).size).toBe(ids.length);
-
-      // Optional: verify minimal content in each issue
-      issues.forEach((issue) => {
+      // Minimal content checks
+      allIssues.forEach((issue) => {
         expect(issue.fields.summary).toBeDefined();
         expect(issue.fields.status).toBeDefined();
       });

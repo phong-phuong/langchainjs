@@ -248,7 +248,6 @@ export class JiraDocumentConverter {
         id: issue.id,
         host: this.host,
         projectKey: this.projectKey,
-        created: issue.fields.created,
       },
     });
   }
@@ -490,15 +489,10 @@ export class JiraProjectLoader extends BaseDocumentLoader {
     return `${year}-${month}-${dayOfMonth}`;
   }
 
-  protected toJiraDateTimeString(date: Date | undefined): string | undefined {
-    if (!date) return undefined;
-    return date.toISOString();
-  }
-
   protected async *fetchIssues(): AsyncIterable<JiraIssue[]> {
     const authorizationHeader = this.buildAuthorizationHeader();
     const url = `${this.host}/rest/api/3/search/jql`;
-    const createdAfterAsString = this.toJiraDateTimeString(this.createdAfter);
+    const createdAfterAsString = this.toJiraDateString(this.createdAfter);
 
     let nextPageToken: string | undefined;
 
